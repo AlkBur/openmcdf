@@ -1,21 +1,12 @@
 package openmcdf
 
 import (
-	"errors"
 	"fmt"
 )
 
-const (
-	MemoryMini TypeMiniMemory = iota
-	MemoryMiniFree
-	MemmoryMiniCount
-)
-
-type TypeMiniMemory uint8
-
 type MiniMemory struct {
-	data       [][]*MiniSector
-	set        []map[*MiniSector]string
+	data       []*MiniSector
+	free       map[*MiniSector]bool
 	sectorSize int
 }
 
@@ -27,83 +18,66 @@ type MiniMemoryIterator struct {
 
 func newMiniMemory(sectorSize int) *MiniMemory {
 	this := &MiniMemory{
-		set:        make([]map[*MiniSector]string, MemmoryMiniCount),
+		free:       make(map[*MiniSector]bool),
 		sectorSize: sectorSize,
-		data:       make([][]*MiniSector, MemmoryMiniCount),
-	}
-	for i := TypeMiniMemory(0); i < MemmoryMiniCount; i++ {
-		this.data[i] = make([]*MiniSector, 0, 10)
-		this.set[i] = make(map[*MiniSector]string)
-
+		data:       make([]*MiniSector, 0, 10),
 	}
 	return this
 }
 
-func (this *MiniMemory) addSector(s *MiniSector, t TypeMiniMemory) error {
+func (this *MiniMemory) addSector(s *MiniSector) error {
 	if s.size != this.sectorSize {
 		return fmt.Errorf("error in the size of a mini-sector: %v", s)
 	}
-	_, ok := this.set[t][s]
-	if ok {
-		return fmt.Errorf("MiniSector already added in %v: %v", t, s)
+	if s.id >= 0 {
+		return fmt.Errorf("MiniSector has already been added: %v", s)
 	}
-	switch t {
-	case MemoryMini:
-		if s.sector.sectorType != TypeSectorMiniFAT {
-			s.sector.sectorType = TypeSectorMiniFAT
-		}
-		s.id = this.Len(t)
-	case MemoryMiniFree:
-		_, ok := this.set[MemoryMini][s]
-		if !ok {
-			return fmt.Errorf("MiniSector not found in mini-memory: %v", t, s)
-		}
-		s.next = FREESECT
-	default:
-		return fmt.Errorf("Unknown type mini-memory: %v", t)
+
+	if s.sector.sectorType != TypeSectorMiniFAT {
+		s.sector.sectorType = TypeSectorMiniFAT
 	}
-	this.data[t] = append(this.data[t], s)
-	this.set[t][s] = t.String()
+	s.id = this.Len()
+	this.data = append(this.data, s)
 	return nil
 }
 
+func (this *MiniMemory) check(s *MiniSector) (err error) {
+	id := s.id
+	if id < 0 || id >= this.Len() || s != this.data[id] {
+		err = fmt.Errorf("Error ID MiniSector: %v", s)
+	}
+	return
+}
+
+func (this *MiniMemory) Delete(s *MiniSector) (err error) {
+	if err = this.check(s); err != nil {
+		return
+	}
+	//delete element
+	delete(this.free, s)
+	this.data = append(this.data[:s.id], this.data[s.id+1:]...)
+	return
+}
+
 func (this *MiniMemory) Close() {
-	for i := TypeMiniMemory(0); i < MemmoryMiniCount; i++ {
-		for j, s := range this.data[i] {
-			delete(this.set[i], s)
-			this.data[i][j] = nil
-		}
+	for i := range this.data {
 		this.data[i] = nil
-		this.set[i] = nil
+	}
+	for s := range this.free {
+		delete(this.free, s)
 	}
 	this.data = nil
-	this.set = nil
+	this.free = nil
 	//----
 	this.sectorSize = 0
 }
 
-func (this *MiniMemory) Len(t TypeMiniMemory) int {
-	if t >= MemmoryMiniCount {
-		return 0
-	}
-	return len(this.data[t])
+func (this *MiniMemory) Len() int {
+	return len(this.data)
 }
 
-func (this *MiniMemory) NewIterator(t TypeMiniMemory) *MiniMemoryIterator {
-	if t >= MemmoryMiniCount {
-		return nil
-	}
-	return &MiniMemoryIterator{current: -1, data: this.data[t]}
-}
-
-func (this TypeMiniMemory) String() string {
-	switch this {
-	case MemoryMini:
-		return "MiniFAT"
-	case MemoryMiniFree:
-		return "Free MiniFAT"
-	}
-	return "Unknown"
+func (this *MiniMemory) NewIterator() *MiniMemoryIterator {
+	return &MiniMemoryIterator{current: -1, data: this.data}
 }
 
 func (this *MiniMemoryIterator) Value() *MiniSector {
@@ -120,9 +94,9 @@ func (this *MiniMemoryIterator) Next() bool {
 	return true
 }
 
-func (this *MiniMemory) getLastSector(t TypeMiniMemory) *MiniSector {
-	if this.Len(t) > 0 {
-		s, err := this.Get(t, this.Len(t)-1)
+func (this *MiniMemory) getLastSector() *MiniSector {
+	if this.Len() > 0 {
+		s, err := this.Get(this.Len() - 1)
 		if err == nil {
 			return s
 		}
@@ -130,23 +104,31 @@ func (this *MiniMemory) getLastSector(t TypeMiniMemory) *MiniSector {
 	return nil
 }
 
-func (this *MiniMemory) Get(t TypeMiniMemory, id int) (*MiniSector, error) {
-	if id >= this.Len(t) || id < 0 {
-		return nil, fmt.Errorf("Index out of range (%v): %v", t, id)
+func (this *MiniMemory) Get(id int) (*MiniSector, error) {
+	if id >= this.Len() || id < 0 {
+		return nil, fmt.Errorf("Index MiniSector out of range: %v", id)
 	}
-	return this.data[t][id], nil
+	return this.data[id], nil
 }
 
-func (this *MiniMemory) Pop() (*MiniSector, error) {
-	if this.Len(MemoryMiniFree) <= 0 {
-		return nil, errors.New("Free mini-memory is empty")
+func (this *MiniMemory) Pop() *MiniSector {
+	for s := range this.free {
+		delete(this.free, s)
+		return s
 	}
-	s := this.data[MemoryMiniFree][0]
-	this.data[MemoryMiniFree] = this.data[MemoryMiniFree][1:]
-	return s, nil
+	return nil
 }
 
 func (this *MiniMemory) Push(s *MiniSector) (err error) {
-	err = this.addSector(s, MemoryMiniFree)
+	if err = this.check(s); err != nil {
+		return
+	}
+	_, ok := this.free[s]
+	if ok {
+		err = fmt.Errorf("Sector already added in free: %v", s)
+		return
+	}
+	s.next = FREESECT
+	this.free[s] = true
 	return
 }

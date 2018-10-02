@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -28,6 +29,7 @@ const (
 
 type DirectoryCollection struct {
 	data []*Directory
+	free map[*Directory]bool
 }
 
 type DirectoryIterator struct {
@@ -56,16 +58,42 @@ type Directory struct {
 //--------------Directory collection--------------
 
 func newDirectoryCollection(cap int) *DirectoryCollection {
-	return &DirectoryCollection{data: make([]*Directory, 0, cap)}
+	return &DirectoryCollection{
+		data: make([]*Directory, 0, cap),
+		free: make(map[*Directory]bool),
+	}
 }
 
 func (this *DirectoryCollection) Len() int {
 	return len(this.data)
 }
 
-func (this *DirectoryCollection) Add(de *Directory) {
+func (this *DirectoryCollection) Add(de *Directory) (err error) {
+	if de.id >= 0 {
+		err = fmt.Errorf("Directory has already been added: %v", de)
+		return
+	}
 	de.id = this.Len()
 	this.data = append(this.data, de)
+	return
+}
+
+func (this *DirectoryCollection) check(de *Directory) (err error) {
+	id := de.id
+	if id < 0 || id >= this.Len() || de != this.data[id] {
+		err = fmt.Errorf("Error ID directory: %v", de)
+	}
+	return
+}
+
+func (this *DirectoryCollection) Delete(de *Directory) (err error) {
+	if err = this.check(de); err != nil {
+		return
+	}
+	//delete element
+	delete(this.free, de)
+	this.data = append(this.data[:de.id], this.data[de.id+1:]...)
+	return
 }
 
 func (this *DirectoryCollection) Get(id int32) (de *Directory, err error) {
@@ -114,7 +142,11 @@ func (this *DirectoryCollection) Close() {
 	for i := range this.data {
 		this.data[i] = nil
 	}
+	for de := range this.free {
+		delete(this.free, de)
+	}
 	this.data = nil
+	this.free = nil
 }
 
 func (this *DirectoryCollection) Iterator() *DirectoryIterator {
@@ -150,34 +182,75 @@ func (this *DirectoryCollection) String() string {
 	return str.String()
 }
 
-func (this *DirectoryCollection) New(name string) *Directory {
-	var de *Directory
-	for i := range this.data {
-		if this.data[i].objectType == StgUnallocated {
-			de = this.data[i]
+func (this *DirectoryCollection) New(cf *CompoundFile, name string, objectType uint8) (*Directory, error) {
+	de := this.Pop()
+	if de == nil {
+		count := cf.SectorSize() / DirectorySize
+		if this.Len()/count >= cf.memory.Len(MemoryDir) {
+			if _, err := cf.addSector(TypeSectorMemmoryDirectory); err != nil {
+				return nil, err
+			}
+		}
+		de = this.Pop()
+		if de == nil {
+			return nil, fmt.Errorf("Error allocated directory memory")
 		}
 	}
-	if de == nil {
-		de = newDirectory()
-		this.Add(de)
-	} else {
-		de.clear()
-	}
 	t := time.Now()
-
-	de.setName("Root Entry")
+	de.setName(name)
+	de.objectType = objectType
 	de.newGUID()
 	de.colorFlag = Black
 	de.setTimeCreate(t)
 	de.setTimeModification(t)
 
+	return de, nil
+}
+
+func (this *DirectoryCollection) Pop() *Directory {
+	if len(this.free) == 0 {
+		return nil
+	}
+	key := make([]*Directory, len(this.free))
+	i := 0
+	for k := range this.free {
+		key[i] = k
+		i++
+	}
+	if len(key) > 1 {
+		sort.Slice(key, func(i, j int) bool {
+			return key[i].id < key[j].id
+		})
+	}
+	de := key[0]
+	delete(this.free, de)
 	return de
+
+	for de := range this.free {
+		delete(this.free, de)
+		return de
+	}
+	return nil
+}
+
+func (this *DirectoryCollection) Push(de *Directory) (err error) {
+	if err = this.check(de); err != nil {
+		return
+	}
+	_, ok := this.free[de]
+	if ok {
+		err = fmt.Errorf("Directory already added in free: %v", de)
+		return
+	}
+	de.clear()
+	this.free[de] = true
+	return
 }
 
 //--------------Directory--------------
 
 func newDirectory() *Directory {
-	this := new(Directory)
+	this := &Directory{id: -1}
 	this.clear()
 	return this
 }
@@ -187,7 +260,7 @@ func (this *Directory) clear() {
 		this.name[i] = 0
 	}
 	this.nameLen = 0
-	this.objectType = 0
+	this.objectType = StgUnallocated
 	this.colorFlag = Red
 	this.leftSiblingID = NOSTREAM
 	this.rightSiblingID = NOSTREAM
@@ -200,8 +273,6 @@ func (this *Directory) clear() {
 	this.modifiedTime = 0
 	this.startSectorLocation = ENDOFCHAIN
 	this.size = 0
-	//////////////
-	this.id = -1
 }
 
 func (this *Directory) setObjectType(objectType uint8) error {
@@ -326,7 +397,7 @@ func (this *Directory) newStream(cf *CompoundFile) *Stream {
 	if this == nil || this.objectType != StgStream {
 		return nil
 	}
-	return newBaseStream(this, cf)
+	return newStream(this, cf)
 }
 
 func (this *Directory) newStorage(cf *CompoundFile) *Storage {
@@ -432,9 +503,7 @@ func (this *Directory) Write(cf *CompoundFile, b []byte) (err error) {
 						return
 					}
 					if s.data == nil {
-						if err = s.read(cf.f); err != nil {
-							return
-						}
+						s.data = make([]byte, s.size)
 					}
 				} else {
 					if s, err = cf.addSector(TypeSectorFAT); err != nil {
@@ -472,24 +541,14 @@ func (this *Directory) Write(cf *CompoundFile, b []byte) (err error) {
 			SecID := int32(this.startSectorLocation)
 			for offset < NewSize {
 				if OldSize > offset && SecID >= 0 {
-					if s, err = cf.mini.Get(MemoryMini, int(SecID)); err != nil {
+					if s, err = cf.mini.Get(int(SecID)); err != nil {
 						return
-					}
-					if s.sector.data == nil {
-						if err = s.sector.read(cf.f); err != nil {
-							return
-						}
 					}
 				} else {
 					if s, err = cf.addMiniSector(); err != nil {
 						return
 					}
 					s.next = ENDOFCHAIN
-					if s.sector.data == nil {
-						if err = s.sector.read(cf.f); err != nil {
-							return
-						}
-					}
 					if old != nil {
 						old.next = uint32(s.id)
 						if err = cf.memory.changeMiniFAT(old); err != nil {
@@ -498,6 +557,11 @@ func (this *Directory) Write(cf *CompoundFile, b []byte) (err error) {
 					} else {
 						this.startSectorLocation = uint32(s.id)
 						updateDE = true
+					}
+				}
+				if s.sector.data == nil {
+					if err = s.sector.read(cf.f); err != nil {
+						return
 					}
 				}
 				if err = s.Write(b[offset:]); err != nil {
@@ -543,7 +607,7 @@ func (this *Directory) Read(cf *CompoundFile) (b []byte, err error) {
 		SecID := int32(this.startSectorLocation)
 		offset := 0
 		for offset < len(b) {
-			if s, err = cf.mini.Get(MemoryMini, int(SecID)); err != nil {
+			if s, err = cf.mini.Get(int(SecID)); err != nil {
 				return
 			}
 			if err = s.Read(cf.f, b[offset:]); err != nil {

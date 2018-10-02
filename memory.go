@@ -222,6 +222,7 @@ func (this *Memory) Pop() (*Sector, error) {
 	}
 	s := this.data[MemoryFree][0]
 	this.data[MemoryFree] = this.data[MemoryFree][1:]
+	delete(this.set, s)
 	return s, nil
 }
 

@@ -46,16 +46,14 @@ func New(ver int) (this *CompoundFile, err error) {
 	this.directory = newDirectoryCollection(1)
 
 	//Create ROOR ENTRY
-	de := this.directory.New("Root Entry")
-	de.setObjectType(5)
-
+	var de *Directory
+	de, err = this.directory.New(this, "Root Entry", StgRoot)
 	if err = this.updateDirectory(de); err != nil {
 		this = nil
 		return
 	}
 
 	this.root = de.newRootStorage(this)
-
 	return
 }
 
@@ -124,7 +122,7 @@ func (this *CompoundFile) load() (err error) {
 	}
 	this.root = de.newRootStorage(this)
 
-	//Log(this.sectorsFAT.getBytes(29))
+	//Log(this.directory)
 
 	return
 }
@@ -237,6 +235,11 @@ func (this *CompoundFile) readDirectory() (err error) {
 				return err
 			}
 			this.directory.Add(de)
+			if de.objectType == StgUnallocated {
+				if err = this.directory.Push(de); err != nil {
+					return err
+				}
+			}
 		}
 		off = int32(s.next)
 		if off < 0 && uint32(off) != ENDOFCHAIN {
@@ -296,15 +299,17 @@ func (this *CompoundFile) readMiniFAT() (err error) {
 			//----------------------------------
 			for i := 0; i < sz; i++ {
 				mini = newMiniSector(this.MiniSectorSize(), i*this.MiniSectorSize(), s)
-				this.mini.addSector(mini, MemoryMini)
+				if err = this.mini.addSector(mini); err != nil {
+					return
+				}
 			}
 			SecID = int32(s.next)
 		}
 
 		idx := 0
 		it := this.memory.NewUInt32Iterator(MemoryTableMini)
-		for it.Next() && idx < this.mini.Len(MemoryMini) {
-			mini, _ = this.mini.Get(MemoryMini, idx)
+		for it.Next() && idx < this.mini.Len() {
+			mini, _ = this.mini.Get(idx)
 			mini.next = it.Value()
 			if mini.next == FREESECT {
 				this.mini.Push(mini)
@@ -362,15 +367,12 @@ func (this *CompoundFile) updateDirectory(de *Directory) (err error) {
 	count := this.SectorSize() / DirectorySize
 	index := de.id / count
 	offset := de.id % count
-
 	if index >= this.memory.Len(MemoryDir) {
-		if s, err = this.addSector(TypeSectorMemmoryDirectory); err != nil {
-			return
-		}
-		if int32(this.header.firstDirectorySectorLocation) < 0 {
-			this.header.firstDirectorySectorLocation = uint32(s.id)
-			this.header.modified = true
-		}
+		err = fmt.Errorf("No memory allocated for the directory: %v", de)
+		//if s, err = this.addSector(TypeSectorMemmoryDirectory); err != nil {
+		//	return
+		//}
+		return
 	} else {
 		if s, err = this.memory.getSector(MemoryDir, int32(index)); err != nil {
 			return
@@ -383,13 +385,16 @@ func (this *CompoundFile) updateDirectory(de *Directory) (err error) {
 
 func (this *CompoundFile) addMiniSector() (*MiniSector, error) {
 	//-----------
-	if this.mini.Len(MemoryMiniFree) == 0 {
-		if _, err := this.addSector(TypeSectorMiniFAT); err != nil {
-			return nil, err
-		}
+	s := this.mini.Pop()
+	if s != nil {
+		return s, nil
 	}
-	if this.mini.Len(MemoryMiniFree) > 0 {
-		return this.mini.Pop()
+	if _, err := this.addSector(TypeSectorMiniFAT); err != nil {
+		return nil, err
+	}
+	s = this.mini.Pop()
+	if s != nil {
+		return s, nil
 	}
 	return nil, fmt.Errorf("Eror add mini sector fat")
 }
@@ -416,13 +421,25 @@ func (this *CompoundFile) addSector(Type SectorType) (*Sector, error) {
 				return nil, err
 			}
 		}
-
-		empty := newDirectory()
 		count := this.SectorSize() / DirectorySize
 		for i := 0; i < count; i++ {
+			empty := newDirectory()
+			this.directory.Add(empty)
+			if err = this.directory.Push(empty); err != nil {
+				return nil, err
+			}
 			if err = s.Write(i*DirectorySize, empty); err != nil {
 				return nil, err
 			}
+		}
+
+		if int32(this.header.firstDirectorySectorLocation) < 0 {
+			fst, err := this.memory.getSector(MemoryDir, 0)
+			if err != nil {
+				return nil, err
+			}
+			this.header.firstDirectorySectorLocation = uint32(fst.id)
+			this.header.modified = true
 		}
 		return s, nil
 	case TypeSectorFAT:
@@ -531,13 +548,13 @@ func (this *CompoundFile) addSector(Type SectorType) (*Sector, error) {
 		}
 		return s, nil
 	case TypeSectorMiniFAT:
-		if this.memory.CountUint32(MemoryTableMini) <= this.mini.Len(MemoryMini) {
+		if this.memory.CountUint32(MemoryTableMini) <= this.mini.Len() {
 			_, err := this.addSector(TypeSectorMemmoryMiniFAT)
 			if err != nil {
 				return nil, err
 			}
 		}
-		old := this.mini.getLastSector(MemoryMini)
+		old := this.mini.getLastSector()
 		s, err := this.addSector(TypeSectorFAT)
 		if err != nil {
 			return nil, err
@@ -566,7 +583,7 @@ func (this *CompoundFile) addSector(Type SectorType) (*Sector, error) {
 		sz := this.sectorSize / this.MiniSectorSize()
 		for i := 0; i < sz; i++ {
 			mini := newMiniSector(this.MiniSectorSize(), i*this.MiniSectorSize(), s)
-			if err = this.mini.addSector(mini, MemoryMini); err != nil {
+			if err = this.mini.addSector(mini); err != nil {
 				return nil, err
 			}
 			if err = this.mini.Push(mini); err != nil {
@@ -714,7 +731,7 @@ func (this *CompoundFile) FreeMiniFAT(SecID int32, size int) (err error) {
 	offset := 0
 	var s *MiniSector
 	for offset < size && SecID >= 0 {
-		if s, err = this.mini.Get(MemoryMini, int(SecID)); err != nil {
+		if s, err = this.mini.Get(int(SecID)); err != nil {
 			return
 		}
 		SecID = int32(s.next)

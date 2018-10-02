@@ -2,16 +2,21 @@ package Test
 
 import (
 	"fmt"
-	"github.com/AlkBur/GoIDE/log"
 	"io"
+	"log"
 	"math/rand"
 	"os"
+	"time"
 )
+
+func init() {
+	rand.Seed(time.Now().Unix())
+}
 
 func GenBuffer(i int) []byte {
 	token := make([]byte, i)
 	if _, err := rand.Read(token); err != nil {
-		log.Error(err)
+		log.Fatal(err)
 	}
 	return token
 }
@@ -47,4 +52,8 @@ func Copy(src, dst string) (int64, error) {
 	defer destination.Close()
 	nBytes, err := io.Copy(destination, source)
 	return nBytes, err
+}
+
+func random(min, max int) int {
+	return rand.Intn(max-min) + min
 }

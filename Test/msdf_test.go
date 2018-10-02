@@ -380,6 +380,8 @@ func Test_RE_WRITE_SMALLER_MINI_STREAM(t *testing.T) {
 }
 
 func Test_TRANSACTED_ADD_STREAM_TO_EXISTING_FILE(t *testing.T) {
+	mcdf.SetLogger(t)
+
 	const srcFilename = "files/report.xls"
 	const dstFilename = "files/reportOverwrite.xls"
 
@@ -447,6 +449,8 @@ func Test_TRANSACTED_ADD_REMOVE_MULTIPLE_STREAM_TO_EXISTING_FILE(t *testing.T) {
 }
 
 func Test_TRANSACTED_ADD_MINISTREAM_TO_EXISTING_FILE(t *testing.T) {
+	mcdf.SetLogger(t)
+
 	const srcFilename = "files/report.xls"
 	const dstFilename = "files/reportOverwriteMultiple.xls"
 
@@ -481,4 +485,207 @@ func Test_TRANSACTED_ADD_MINISTREAM_TO_EXISTING_FILE(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
+}
+
+func Test_TRANSACTED_REMOVE_MINI_STREAM_ADD_MINISTREAM_TO_EXISTING_FILE(t *testing.T) {
+	mcdf.SetLogger(t)
+
+	const srcFilename = "files/report.xls"
+	const dstFilename = "files/reportOverwrite2.xls"
+
+	_, err := Copy(srcFilename, dstFilename)
+	assert.NoError(t, err)
+
+	cf, err := mcdf.Open(dstFilename)
+	assert.NoError(t, err)
+
+	err = cf.RootStorage().Delete("\x05SummaryInformation")
+	assert.NoError(t, err)
+
+	buffer := GenBuffer(2000)
+
+	addedStream, err := cf.RootStorage().AddStream("MyNewStream")
+	assert.NoError(t, err)
+	err = addedStream.SetData(buffer)
+	assert.NoError(t, err)
+
+	err = cf.Commit()
+	assert.NoError(t, err)
+	cf.Close()
+
+	if _, err := os.Stat(dstFilename); err == nil {
+		err = os.Remove(dstFilename)
+		assert.NoError(t, err)
+	}
+
+}
+
+func Test_DELETE_STREAM_1(t *testing.T) {
+	mcdf.SetLogger(t)
+
+	const filename = "files/MultipleStorage.cfs"
+	const dstFilename = "files/MultipleStorage_REMOVED_STREAM_1.cfs"
+
+	cf, err := mcdf.Open(filename)
+	assert.NoError(t, err)
+
+	cfs, err := cf.RootStorage().GetStorage("MyStorage")
+	assert.NoError(t, err)
+	err = cfs.Delete("MySecondStream")
+	assert.Error(t, err)
+	assert.Equal(t, err, mcdf.NotFoundDirectory)
+
+	err = cf.Save(dstFilename)
+	assert.NoError(t, err)
+
+	cf.Close()
+	if _, err := os.Stat(dstFilename); err == nil {
+		err = os.Remove(dstFilename)
+		assert.NoError(t, err)
+	}
+}
+
+func Test_DELETE_STREAM_2(t *testing.T) {
+	mcdf.SetLogger(t)
+
+	const filename = "files/MultipleStorage.cfs"
+	const dstFilename = "files/MultipleStorage_REMOVED_STREAM_2.cfs"
+
+	cf, err := mcdf.Open(filename)
+	assert.NoError(t, err)
+	cfs, err := cf.RootStorage().GetStorage("MyStorage")
+	assert.NoError(t, err)
+	cfs, err = cfs.GetStorage("AnotherStorage")
+	assert.NoError(t, err)
+
+	cfs.Delete("AnotherStream")
+	assert.NoError(t, err)
+
+	err = cf.Save(dstFilename)
+	assert.NoError(t, err)
+
+	cf.Close()
+	if _, err := os.Stat(dstFilename); err == nil {
+		err = os.Remove(dstFilename)
+		assert.NoError(t, err)
+	}
+}
+
+func Test_WRITE_AND_READ_CFS(t *testing.T) {
+	mcdf.SetLogger(t)
+
+	const filename = "files/WRITE_AND_READ_CFS.cfs"
+
+	cf, err := mcdf.New(3)
+	assert.NoError(t, err)
+
+	st, err := cf.RootStorage().AddStorage("MyStorage")
+	assert.NoError(t, err)
+	sm, err := st.AddStream("MyStream")
+	assert.NoError(t, err)
+	b := GetBuffer(220, 0x0A)
+	sm.SetData(b)
+
+	err = cf.Save(filename)
+	assert.NoError(t, err)
+	cf.Close()
+
+	cf2, err := mcdf.Open(filename)
+	assert.NoError(t, err)
+	st2, err := cf2.RootStorage().GetStorage("MyStorage")
+	assert.NoError(t, err)
+	sm2, err := st2.GetStream("MyStream")
+	assert.NoError(t, err)
+	assert.NotNil(t, sm2)
+	assert.True(t, sm2.Size() == 220)
+
+	b2, err := sm2.GetData()
+	assert.NoError(t, err)
+	assert.Equal(t, b, b2)
+
+	cf2.Close()
+
+	if _, err := os.Stat(filename); err == nil {
+		err = os.Remove(filename)
+		assert.NoError(t, err)
+	}
+}
+
+func Test_INCREMENTAL_SIZE_MULTIPLE_WRITE_AND_READ_CFS(t *testing.T) {
+
+	for i := random(1, 100); i < 1024*1024*70; i = i << 1 {
+		SingleWriteReadMatching(t, i+random(0, 3))
+	}
+}
+
+func SingleWriteReadMatching(t *testing.T, size int) {
+
+	const filename = "files/INCREMENTAL_SIZE_MULTIPLE_WRITE_AND_READ_CFS.cfs"
+
+	cf, err := mcdf.New(3)
+	assert.NoError(t, err)
+	st, err := cf.RootStorage().AddStorage("MyStorage")
+	assert.NoError(t, err)
+	sm, err := st.AddStream("MyStream")
+	assert.NoError(t, err)
+
+	b := GenBuffer(size)
+
+	sm.SetData(b)
+	cf.Save(filename)
+	cf.Close()
+	cf2, err := mcdf.Open(filename)
+	assert.NoError(t, err)
+	st2, err := cf2.RootStorage().GetStorage("MyStorage")
+	assert.NoError(t, err)
+	sm2, err := st2.GetStream("MyStream")
+	assert.NoError(t, err)
+
+	assert.NotNil(t, sm2)
+	assert.True(t, sm2.Size() == int64(size))
+
+	b2, err := sm2.GetData()
+	assert.NoError(t, err)
+
+	assert.Equal(t, b2, b)
+
+	cf2.Close()
+
+	if _, err := os.Stat(filename); err == nil {
+		err = os.Remove(filename)
+		assert.NoError(t, err)
+	}
+}
+
+func Test_APPEND_DATA_TO_STREAM(t *testing.T) {
+	const filename = "files/APPEND_DATA_TO_STREAM.cfs"
+
+	b := []byte{0x0, 0x1, 0x2, 0x3}
+	b2 := []byte{0x4, 0x5, 0x6, 0x7}
+
+	cf, err := mcdf.New(3)
+	assert.NoError(t, err)
+	st, err := cf.RootStorage().AddStream("MyMiniStream")
+	assert.NoError(t, err)
+	err = st.SetData(b)
+	assert.NoError(t, err)
+	err = st.Append(b2)
+	assert.NoError(t, err)
+
+	cf.Save(filename)
+	cf.Close()
+
+	cmp := []byte{0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7}
+	cf, err = mcdf.Open(filename)
+	st, err = cf.RootStorage().GetStream("MyMiniStream")
+
+	data, err := st.GetData()
+
+	assert.Equal(t, cmp, data)
+	cf.Close()
+
+	if _, err := os.Stat(filename); err == nil {
+		err = os.Remove(filename)
+		assert.NoError(t, err)
+	}
 }

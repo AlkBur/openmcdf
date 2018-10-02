@@ -2,32 +2,17 @@ package openmcdf
 
 import (
 	"errors"
-	"time"
 )
 
-var StreamNotFound = errors.New("Storage not found")
+var StreamNotFound = errors.New("Stream not found")
 
 type Stream struct {
 	cf *CompoundFile
 	de *Directory
 }
 
-func newBaseStream(de *Directory, cf *CompoundFile) *Stream {
+func newStream(de *Directory, cf *CompoundFile) *Stream {
 	return &Stream{de: de, cf: cf}
-}
-
-func newStream(name string, cf *CompoundFile) *Stream {
-	de := newDirectory()
-	de.setObjectType(StgStream)
-	if err := de.setName(name); err != nil {
-		return nil
-	}
-	t := time.Now()
-	de.newGUID()
-	de.setTimeCreate(t)
-	de.setTimeModification(t)
-
-	return newBaseStream(de, cf)
 }
 
 func (this *Stream) GetData() (b []byte, err error) {
@@ -62,5 +47,16 @@ func (this *Stream) SetData(b []byte) (err error) {
 	}
 
 	err = this.de.Write(this.cf, b)
+	return
+}
+
+func (this *Stream) Append(b []byte) (err error) {
+	buf, err := this.GetData()
+	if err != nil {
+		return
+	}
+	buf = append(buf, b...)
+
+	err = this.de.Write(this.cf, buf)
 	return
 }

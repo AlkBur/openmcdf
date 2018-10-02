@@ -58,6 +58,52 @@ func (this *Tree) Insert(z *Node) {
 	this.rbInsertFixup(z)
 }
 
+// Delete deletes the node by key
+func (t *Tree) Delete(z *Node) {
+	if z == nil {
+		return
+	}
+
+	var x, y, parent *Node
+	y = z
+	yOriginalColor := y.color
+	parent = z.parent
+	if z.left == nil {
+		x = z.right
+		t.transplant(z, z.right)
+	} else if z.right == nil {
+		x = z.left
+		t.transplant(z, z.left)
+	} else {
+		y = minimum(z.right)
+		yOriginalColor = y.color
+		x = y.right
+
+		if y.parent == z {
+			if x == nil {
+				parent = y
+			} else {
+				x.parent = y
+			}
+		} else {
+			t.transplant(y, y.right)
+			y.right = z.right
+			y.right.parent = y
+			y.modified = true
+		}
+		t.transplant(z, y)
+		y.left = z.left
+		y.left.parent = y
+		y.color = z.color
+		y.modified = true
+	}
+
+	if yOriginalColor == Black {
+		t.rbDeleteFixup(x, parent)
+	}
+	t.size--
+}
+
 func (this *Tree) rbInsertFixup(z *Node) {
 	var y *Node
 	for z.parent != nil && z.parent.color == Red {
@@ -107,6 +153,91 @@ func (this *Tree) rbInsertFixup(z *Node) {
 	}
 	this.root.color = Black
 	this.root.modified = true
+}
+
+func (t *Tree) rbDeleteFixup(x, parent *Node) {
+	var w *Node
+
+	for x != t.root && getColor(x) == Black {
+		if x != nil {
+			parent = x.parent
+		}
+		if x == parent.left {
+			w = parent.right
+			if w.color == Red {
+				w.color = Black
+				w.modified = true
+				parent.color = Red
+				parent.modified = true
+				t.leftRotate(parent)
+				w = parent.right
+			}
+			if getColor(w.left) == Black && getColor(w.right) == Black {
+				w.color = Red
+				w.modified = true
+				x = parent
+			} else {
+				if getColor(w.right) == Black {
+					if w.left != nil {
+						w.left.color = Black
+						w.left.modified = true
+					}
+					w.color = Red
+					w.modified = true
+					t.rightRotate(w)
+					w = parent.right
+				}
+				w.color = parent.color
+				parent.color = Black
+				parent.modified = true
+				if w.right != nil {
+					w.right.color = Black
+					w.right.modified = true
+				}
+				t.leftRotate(parent)
+				x = t.root
+			}
+		} else {
+			w = parent.left
+			if w.color == Red {
+				w.color = Black
+				w.modified = true
+				parent.color = Red
+				parent.modified = true
+				t.rightRotate(parent)
+				w = parent.left
+			}
+			if getColor(w.left) == Black && getColor(w.right) == Black {
+				w.color = Red
+				w.modified = true
+				x = parent
+			} else {
+				if getColor(w.left) == Black {
+					if w.right != nil {
+						w.right.color = Black
+					}
+					w.color = Red
+					w.modified = true
+					t.leftRotate(w)
+					w = parent.left
+				}
+				w.color = parent.color
+				w.modified = true
+				parent.color = Black
+				parent.modified = true
+				if w.left != nil {
+					w.left.color = Black
+					w.left.modified = true
+				}
+				t.rightRotate(parent)
+				x = t.root
+			}
+		}
+	}
+	if x != nil {
+		x.color = Black
+		x.modified = true
+	}
 }
 
 func (this *Tree) leftRotate(x *Node) {
@@ -177,6 +308,23 @@ func (t *Tree) findnode(key string) *Node {
 	return nil
 }
 
+// transplant transplants the subtree u and v
+func (t *Tree) transplant(u, v *Node) {
+	if u.parent == nil {
+		t.root = v
+	} else if u == u.parent.left {
+		u.parent.left = v
+		u.parent.modified = true
+	} else {
+		u.parent.right = v
+		u.parent.modified = true
+	}
+	if v == nil {
+		return
+	}
+	v.parent = u.parent
+}
+
 func (t *Tree) Iterator() *Node {
 	return minimum(t.root)
 }
@@ -228,4 +376,11 @@ func (n *Node) modifiedValue() bool {
 		m = true
 	}
 	return m
+}
+
+func getColor(n *Node) int {
+	if n == nil {
+		return Black
+	}
+	return n.color
 }
