@@ -134,7 +134,11 @@ func (this *CompoundFile) load() (err error) {
 func (this *CompoundFile) readFAT() (err error) {
 	var s *Sector
 
-	for i := 0; i < int(this.header.numFATSector); i++ {
+	num := int(this.header.numFATSector)
+	if num > len(this.header.headerDIFAT) {
+		num = len(this.header.headerDIFAT)
+	}
+	for i := 0; i < num; i++ {
 		if s, err = this.sectors.Get(int32(this.header.headerDIFAT[i])); err != nil {
 			return
 		}
