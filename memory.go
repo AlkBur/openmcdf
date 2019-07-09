@@ -53,19 +53,29 @@ func (this *Memory) addSector(s *Sector, t TypeMemory) error {
 	switch t {
 	case MemoryTableFat:
 		s.sectorType = TypeSectorMemmoryFAT
-		s.next = FATSECT
+		if s.next == 0 {
+			s.next = FATSECT
+		}
 	case MemoryTableMini:
 		s.sectorType = TypeSectorMemmoryMiniFAT
-		s.next = ENDOFCHAIN
+		if s.next == 0 {
+			s.next = ENDOFCHAIN
+		}
 	case MemoryDir:
 		s.sectorType = TypeSectorMemmoryDirectory
-		s.next = ENDOFCHAIN
+		if s.next == 0 {
+			s.next = ENDOFCHAIN
+		}
 	case MemoryDIFAT:
 		s.sectorType = TypeSectorMemmoryDIFAT
-		s.next = DIFSECT
+		if s.next == 0 {
+			s.next = DIFSECT
+		}
 	case MemoryFree:
 		s.sectorType = TypeSectorFAT
-		s.next = FREESECT
+		if s.next == 0 {
+			s.next = FREESECT
+		}
 	default:
 		return fmt.Errorf("Unknown type memory: %v", t)
 	}

@@ -185,13 +185,23 @@ func (this *Storage) Delete(name string) (err error) {
 
 func (this *Storage) loadChildren() {
 	de := this.cf.directory.getChild(this.de)
-	if de != nil {
-		node := NewNode(de)
-		this.tree = NewTree(node)
-		this.loadSiblings(node)
-	} else {
-		this.tree = NewTree(nil)
+	this.tree = NewTree(nil)
+	this.addNode(de)
+}
+
+func (this *Storage) addNode(de *Directory) {
+	if de == nil {
+		return
 	}
+
+	node := NewNode(de)
+	this.tree.Insert(node)
+
+	deLeft := this.cf.directory.getLeft(node.Value)
+	deRight := this.cf.directory.getRight(node.Value)
+
+	this.addNode(deLeft)
+	this.addNode(deRight)
 }
 
 func (this *Storage) loadSiblings(node *Node) {

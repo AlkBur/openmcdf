@@ -19,6 +19,14 @@ func NewTree(root *Node) *Tree {
 	return &Tree{root: root}
 }
 
+func (this *Tree) Size() int {
+	return this.size
+}
+
+func (this *Tree) GetRoot() *Node {
+	return this.root
+}
+
 func NewNode(de *Directory) *Node {
 	return &Node{Value: de, Key: de.Name()}
 }
@@ -378,9 +386,25 @@ func (n *Node) modifiedValue() bool {
 	return m
 }
 
-func getColor(n *Node) int {
+func (n *Node) GetColor() int {
 	if n == nil {
 		return Black
 	}
 	return n.color
+}
+
+func (this *Node) GetLeft() *Node {
+	return this.left
+}
+
+func (this *Node) GetRight() *Node {
+	return this.right
+}
+
+func (this *Node) GetParent() *Node {
+	return this.parent
+}
+
+func getColor(n *Node) int {
+	return n.GetColor()
 }

@@ -92,6 +92,10 @@ func Open(filename string) (this *CompoundFile, err error) {
 	return
 }
 
+func (this *CompoundFile) Header() *Header {
+	return this.header
+}
+
 func (this *CompoundFile) SectorSize() int {
 	return this.sectorSize
 }
@@ -230,11 +234,13 @@ func (this *CompoundFile) readDirectory() (err error) {
 		}
 		//-------------------------------
 		for j := 0; j < int(sz); j++ {
-			de := newDirectory()
+			de := NewDirectory()
 			if err = de.read(buf[j*DirectorySize : j*DirectorySize+DirectorySize]); err != nil {
 				return err
 			}
-			this.directory.Add(de)
+			if err = this.directory.Add(de); err != nil {
+				return err
+			}
 			if de.objectType == StgUnallocated {
 				if err = this.directory.Push(de); err != nil {
 					return err
@@ -312,7 +318,10 @@ func (this *CompoundFile) readMiniFAT() (err error) {
 			mini, _ = this.mini.Get(idx)
 			mini.next = it.Value()
 			if mini.next == FREESECT {
-				this.mini.Push(mini)
+				err = this.mini.Push(mini)
+				if err != nil {
+					return err
+				}
 			}
 			idx++
 		}
@@ -333,7 +342,7 @@ func (this *CompoundFile) Close() {
 	}
 	this.header = nil
 	if this.f != nil {
-		this.f.Close()
+		_ = this.f.Close()
 	}
 
 	//memory
@@ -423,8 +432,10 @@ func (this *CompoundFile) addSector(Type SectorType) (*Sector, error) {
 		}
 		count := this.SectorSize() / DirectorySize
 		for i := 0; i < count; i++ {
-			empty := newDirectory()
-			this.directory.Add(empty)
+			empty := NewDirectory()
+			if err = this.directory.Add(empty); err != nil {
+				return nil, err
+			}
 			if err = this.directory.Push(empty); err != nil {
 				return nil, err
 			}
@@ -529,7 +540,9 @@ func (this *CompoundFile) addSector(Type SectorType) (*Sector, error) {
 					this.header.firstDIFATSectorLocation = uint32(difat.id)
 				}
 
-				this.memory.addSector(difat, MemoryDIFAT)
+				if err := this.memory.addSector(difat, MemoryDIFAT); err != nil {
+					return nil, err
+				}
 				this.header.numDIFATSector = uint32(this.memory.Len(MemoryDIFAT))
 
 				if err := this.memory.changeFAT(difat); err != nil {
@@ -572,7 +585,9 @@ func (this *CompoundFile) addSector(Type SectorType) (*Sector, error) {
 				return nil, err
 			}
 			de.startSectorLocation = uint32(s.id)
-			this.updateDirectory(de)
+			if err = this.updateDirectory(de); err != nil {
+				return nil, err
+			}
 		} else {
 			old.sector.next = uint32(s.id)
 			if err = this.memory.changeFAT(old.sector); err != nil {
@@ -611,7 +626,9 @@ func (this *CompoundFile) addSector(Type SectorType) (*Sector, error) {
 			}
 		}
 
-		this.memory.addSector(s, MemoryTableMini)
+		if err = this.memory.addSector(s, MemoryTableMini); err != nil {
+			return nil, err
+		}
 		this.header.numMiniFATSector = uint32(this.memory.Len(MemoryTableMini))
 		this.header.modified = true
 

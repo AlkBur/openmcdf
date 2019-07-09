@@ -197,14 +197,14 @@ func (this *DirectoryCollection) New(cf *CompoundFile, name string, objectType u
 		}
 	}
 	t := time.Now()
-	de.setName(name)
+	err := de.SetName(name)
 	de.objectType = objectType
 	de.newGUID()
 	de.colorFlag = Black
 	de.setTimeCreate(t)
 	de.setTimeModification(t)
 
-	return de, nil
+	return de, err
 }
 
 func (this *DirectoryCollection) Pop() *Directory {
@@ -225,12 +225,6 @@ func (this *DirectoryCollection) Pop() *Directory {
 	de := key[0]
 	delete(this.free, de)
 	return de
-
-	for de := range this.free {
-		delete(this.free, de)
-		return de
-	}
-	return nil
 }
 
 func (this *DirectoryCollection) Push(de *Directory) (err error) {
@@ -249,7 +243,7 @@ func (this *DirectoryCollection) Push(de *Directory) (err error) {
 
 //--------------Directory--------------
 
-func newDirectory() *Directory {
+func NewDirectory() *Directory {
 	this := &Directory{id: -1}
 	this.clear()
 	return this
@@ -299,7 +293,7 @@ func (this *Directory) getTimeModification() (t time.Time) {
 	return ToTime(this.modifiedTime)
 }
 
-func (this *Directory) setName(name string) error {
+func (this *Directory) SetName(name string) error {
 	if strings.Index(name, "\\") >= 0 ||
 		strings.Index(name, "/") >= 0 ||
 		strings.Index(name, ":") >= 0 ||
@@ -520,7 +514,9 @@ func (this *Directory) Write(cf *CompoundFile, b []byte) (err error) {
 						updateDE = true
 					}
 				}
-				s.Write(0, b[offset:])
+				if err = s.Write(0, b[offset:]); err != nil {
+					return
+				}
 				offset += s.size
 				old = s
 				SecID = int32(s.next)
